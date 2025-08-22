@@ -1,0 +1,15 @@
+# depslib dependency file v1.0
+1755876073 source:c:\users\usha_personal_laptop\desktop\codeblocks_project\gui_main.cpp
+	<iostream>
+	<vector>
+	<algorithm>
+	<queue>
+	<iomanip>
+	<sstream>
+	<climits>
+	<string>
+	<cstdlib>
+	<ctime>
+	<windows.h>
+	<commctrl.h>
+

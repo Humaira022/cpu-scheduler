@@ -1,0 +1,713 @@
+#include <iostream>
+#include <vector>
+#include <algorithm>
+#include <queue>
+#include <iomanip>
+#include <sstream>
+#include <climits>
+#include <string>
+#include <cstdlib>
+#include <ctime>
+#include <windows.h>
+#include <commctrl.h>
+
+#pragma comment(lib, "comctl32.lib")
+#pragma comment(lib, "gdi32.lib")
+#pragma comment(lib, "user32.lib")
+
+using namespace std;
+struct Process {
+    int id;              
+    int arrivalTime;     
+    int burstTime;       
+    int priority;        
+    int waitingTime;     
+    int turnaroundTime;  
+    int completionTime;  
+    int remainingTime;   
+    
+    Process() : id(0), arrivalTime(0), burstTime(0), priority(0), 
+                waitingTime(0), turnaroundTime(0), completionTime(0), remainingTime(0) {}
+    
+    Process(int i, int at, int bt, int p = 0) 
+        : id(i), arrivalTime(at), burstTime(bt), priority(p),
+          waitingTime(0), turnaroundTime(0), completionTime(0), remainingTime(bt) {}
+};
+struct GanttEntry {
+    int processId;
+    int startTime;
+    int endTime;
+    
+    GanttEntry(int pid, int start, int end) 
+        : processId(pid), startTime(start), endTime(end) {}
+};
+#define ID_ARRIVAL_EDIT     1001
+#define ID_BURST_EDIT       1002
+#define ID_PRIORITY_EDIT    1003
+#define ID_ADD_BUTTON       1004
+#define ID_CLEAR_BUTTON     1005
+#define ID_FCFS_BUTTON      1006
+#define ID_SJF_BUTTON       1007
+#define ID_RR_BUTTON        1008
+#define ID_PRIORITY_BUTTON  1009
+#define ID_COMPARE_BUTTON   1010
+#define ID_QUANTUM_EDIT     1011
+#define ID_PROCESS_LIST     1012
+#define ID_RESULTS_LIST     1013
+#define ID_METRICS_STATIC   1014
+
+// Global variables
+HWND hMainWindow;
+HWND hArrivalEdit, hBurstEdit, hPriorityEdit, hQuantumEdit;
+HWND hProcessList, hResultsList, hMetricsStatic;
+vector<Process> processes;
+vector<Process> lastResults;
+vector<GanttEntry> lastGantt;
+string lastAlgorithm;
+
+/**
+ * CPU Scheduler class implementing various scheduling algorithms
+ */
+class CPUScheduler {
+public:
+    // [Same scheduling algorithms as before - FCFS, SJF, RR, Priority]
+    static pair<vector<Process>, vector<GanttEntry>> fcfs(vector<Process> processes) {
+        vector<GanttEntry> gantt;
+        
+        sort(processes.begin(), processes.end(), 
+             [](const Process& a, const Process& b) {
+                 return a.arrivalTime < b.arrivalTime;
+             });
+        
+        int currentTime = 0;
+        
+        for (auto& process : processes) {
+            if (currentTime < process.arrivalTime) {
+                currentTime = process.arrivalTime;
+            }
+            
+            process.waitingTime = currentTime - process.arrivalTime;
+            process.completionTime = currentTime + process.burstTime;
+            process.turnaroundTime = process.completionTime - process.arrivalTime;
+            
+            gantt.emplace_back(process.id, currentTime, process.completionTime);
+            
+            currentTime = process.completionTime;
+        }
+        
+        return {processes, gantt};
+    }
+    
+    static pair<vector<Process>, vector<GanttEntry>> sjf(vector<Process> processes) {
+        vector<GanttEntry> gantt;
+        vector<Process> completed;
+        vector<bool> isCompleted(processes.size(), false);
+        
+        int currentTime = 0;
+        int completedCount = 0;
+        
+        while (completedCount < processes.size()) {
+            int shortestIdx = -1;
+            int shortestBurst = INT_MAX;
+            
+            for (int i = 0; i < processes.size(); i++) {
+                if (!isCompleted[i] && processes[i].arrivalTime <= currentTime &&
+                    processes[i].burstTime < shortestBurst) {
+                    shortestBurst = processes[i].burstTime;
+                    shortestIdx = i;
+                }
+            }
+            
+            if (shortestIdx == -1) {
+                currentTime++;
+            } else {
+                Process& process = processes[shortestIdx];
+                
+                process.waitingTime = currentTime - process.arrivalTime;
+                process.completionTime = currentTime + process.burstTime;
+                process.turnaroundTime = process.completionTime - process.arrivalTime;
+                
+                gantt.emplace_back(process.id, currentTime, process.completionTime);
+                
+                currentTime = process.completionTime;
+                isCompleted[shortestIdx] = true;
+                completedCount++;
+            }
+        }
+        
+        return {processes, gantt};
+    }
+    
+    static pair<vector<Process>, vector<GanttEntry>> roundRobin(vector<Process> processes, int timeQuantum) {
+        vector<GanttEntry> gantt;
+        queue<int> readyQueue;
+        vector<bool> inQueue(processes.size(), false);
+        
+        for (auto& process : processes) {
+            process.remainingTime = process.burstTime;
+        }
+        
+        int currentTime = 0;
+        int completedCount = 0;
+        
+        for (int i = 0; i < processes.size(); i++) {
+            if (processes[i].arrivalTime <= currentTime) {
+                readyQueue.push(i);
+                inQueue[i] = true;
+            }
+        }
+        
+        while (completedCount < processes.size()) {
+            if (readyQueue.empty()) {
+                currentTime++;
+                for (int i = 0; i < processes.size(); i++) {
+                    if (!inQueue[i] && processes[i].arrivalTime <= currentTime) {
+                        readyQueue.push(i);
+                        inQueue[i] = true;
+                    }
+                }
+                continue;
+            }
+            
+            int currentIdx = readyQueue.front();
+            readyQueue.pop();
+            Process& currentProcess = processes[currentIdx];
+            
+            int execTime = min(timeQuantum, currentProcess.remainingTime);
+            int startTime = currentTime;
+            currentTime += execTime;
+            currentProcess.remainingTime -= execTime;
+            
+            gantt.emplace_back(currentProcess.id, startTime, currentTime);
+            
+            for (int i = 0; i < processes.size(); i++) {
+                if (!inQueue[i] && processes[i].arrivalTime <= currentTime && 
+                    processes[i].remainingTime > 0) {
+                    readyQueue.push(i);
+                    inQueue[i] = true;
+                }
+            }
+            
+            if (currentProcess.remainingTime == 0) {
+                currentProcess.completionTime = currentTime;
+                currentProcess.turnaroundTime = currentProcess.completionTime - currentProcess.arrivalTime;
+                currentProcess.waitingTime = currentProcess.turnaroundTime - currentProcess.burstTime;
+                completedCount++;
+            } else {
+                readyQueue.push(currentIdx);
+            }
+        }
+        
+        return {processes, gantt};
+    }
+    
+    static pair<vector<Process>, vector<GanttEntry>> priority(vector<Process> processes) {
+        vector<GanttEntry> gantt;
+        vector<bool> isCompleted(processes.size(), false);
+        
+        int currentTime = 0;
+        int completedCount = 0;
+        
+        while (completedCount < processes.size()) {
+            int highestPriorityIdx = -1;
+            int highestPriority = INT_MAX;
+            
+            for (int i = 0; i < processes.size(); i++) {
+                if (!isCompleted[i] && processes[i].arrivalTime <= currentTime &&
+                    processes[i].priority < highestPriority) {
+                    highestPriority = processes[i].priority;
+                    highestPriorityIdx = i;
+                }
+            }
+            
+            if (highestPriorityIdx == -1) {
+                currentTime++;
+            } else {
+                Process& process = processes[highestPriorityIdx];
+                
+                process.waitingTime = currentTime - process.arrivalTime;
+                process.completionTime = currentTime + process.burstTime;
+                process.turnaroundTime = process.completionTime - process.arrivalTime;
+                
+                gantt.emplace_back(process.id, currentTime, process.completionTime);
+                
+                currentTime = process.completionTime;
+                isCompleted[highestPriorityIdx] = true;
+                completedCount++;
+            }
+        }
+        
+        return {processes, gantt};
+    }
+    
+    static double calculateAverageWaitingTime(const vector<Process>& processes) {
+        if (processes.empty()) return 0.0;
+        
+        double total = 0.0;
+        for (const auto& process : processes) {
+            total += process.waitingTime;
+        }
+        return total / processes.size();
+    }
+    
+    static double calculateAverageTurnaroundTime(const vector<Process>& processes) {
+        if (processes.empty()) return 0.0;
+        
+        double total = 0.0;
+        for (const auto& process : processes) {
+            total += process.turnaroundTime;
+        }
+        return total / processes.size();
+    }
+};
+
+// Helper functions for GUI
+void UpdateProcessList() {
+    SendMessage(hProcessList, LVM_DELETEALLITEMS, 0, 0);
+    
+    for (int i = 0; i < processes.size(); i++) {
+        LVITEM lvi = {0};
+        lvi.mask = LVIF_TEXT;
+        lvi.iItem = i;
+        
+        // Process ID
+        string pid = to_string(processes[i].id);
+        lvi.pszText = (LPSTR)pid.c_str();
+        lvi.iSubItem = 0;
+        ListView_InsertItem(hProcessList, &lvi);
+        
+        // Arrival Time
+        string arrival = to_string(processes[i].arrivalTime);
+        ListView_SetItemText(hProcessList, i, 1, (LPSTR)arrival.c_str());
+        
+        // Burst Time
+        string burst = to_string(processes[i].burstTime);
+        ListView_SetItemText(hProcessList, i, 2, (LPSTR)burst.c_str());
+        
+        // Priority
+        string priority = to_string(processes[i].priority);
+        ListView_SetItemText(hProcessList, i, 3, (LPSTR)priority.c_str());
+    }
+}
+
+void UpdateResultsList() {
+    SendMessage(hResultsList, LVM_DELETEALLITEMS, 0, 0);
+    
+    for (int i = 0; i < lastResults.size(); i++) {
+        LVITEM lvi = {0};
+        lvi.mask = LVIF_TEXT;
+        lvi.iItem = i;
+        
+        // Process ID
+        string pid = "P" + to_string(lastResults[i].id);
+        lvi.pszText = (LPSTR)pid.c_str();
+        lvi.iSubItem = 0;
+        ListView_InsertItem(hResultsList, &lvi);
+        
+        // Arrival Time
+        string arrival = to_string(lastResults[i].arrivalTime);
+        ListView_SetItemText(hResultsList, i, 1, (LPSTR)arrival.c_str());
+        
+        // Burst Time
+        string burst = to_string(lastResults[i].burstTime);
+        ListView_SetItemText(hResultsList, i, 2, (LPSTR)burst.c_str());
+        
+        // Completion Time
+        string completion = to_string(lastResults[i].completionTime);
+        ListView_SetItemText(hResultsList, i, 3, (LPSTR)completion.c_str());
+        
+        // Waiting Time
+        string waiting = to_string(lastResults[i].waitingTime);
+        ListView_SetItemText(hResultsList, i, 4, (LPSTR)waiting.c_str());
+        
+        // Turnaround Time
+        string turnaround = to_string(lastResults[i].turnaroundTime);
+        ListView_SetItemText(hResultsList, i, 5, (LPSTR)turnaround.c_str());
+    }
+    
+    // Update metrics
+    if (!lastResults.empty()) {
+        double avgWaiting = CPUScheduler::calculateAverageWaitingTime(lastResults);
+        double avgTurnaround = CPUScheduler::calculateAverageTurnaroundTime(lastResults);
+        
+        stringstream ss;
+        ss << "Algorithm: " << lastAlgorithm << " | ";
+        ss << "Avg Waiting: " << fixed << setprecision(2) << avgWaiting << " ms | ";
+        ss << "Avg Turnaround: " << fixed << setprecision(2) << avgTurnaround << " ms";
+        
+        SetWindowText(hMetricsStatic, ss.str().c_str());
+    }
+}
+
+void RunAlgorithm(const string& algorithm) {
+    if (processes.empty()) {
+        MessageBox(hMainWindow, "Please add some processes first!", "No Processes", MB_OK | MB_ICONWARNING);
+        return;
+    }
+    
+    if (algorithm == "FCFS") {
+        auto result = CPUScheduler::fcfs(processes);
+        lastResults = result.first;
+        lastGantt = result.second;
+        lastAlgorithm = "FCFS";
+    } else if (algorithm == "SJF") {
+        auto result = CPUScheduler::sjf(processes);
+        lastResults = result.first;
+        lastGantt = result.second;
+        lastAlgorithm = "SJF";
+    } else if (algorithm == "RR") {
+        char buffer[10];
+        GetWindowText(hQuantumEdit, buffer, 10);
+        int quantum = atoi(buffer);
+        if (quantum <= 0) quantum = 2;
+        
+        auto result = CPUScheduler::roundRobin(processes, quantum);
+        lastResults = result.first;
+        lastGantt = result.second;
+        lastAlgorithm = "Round Robin (q=" + to_string(quantum) + ")";
+    } else if (algorithm == "Priority") {
+        auto result = CPUScheduler::priority(processes);
+        lastResults = result.first;
+        lastGantt = result.second;
+        lastAlgorithm = "Priority";
+    }
+    
+    UpdateResultsList();
+    InvalidateRect(hMainWindow, NULL, TRUE); // Trigger repaint for Gantt chart
+}
+
+void DrawGanttChart(HDC hdc) {
+    if (lastGantt.empty()) return;
+    
+    int maxTime = 0;
+    for (const auto& entry : lastGantt) {
+        maxTime = max(maxTime, entry.endTime);
+    }
+    
+    if (maxTime > 0) {
+        int chartX = 20;
+        int chartY = 540;
+        int chartWidth = 600;
+        int chartHeight = 40;
+        
+        // Draw background
+        RECT rect = {chartX, chartY, chartX + chartWidth, chartY + chartHeight};
+        FillRect(hdc, &rect, (HBRUSH)(COLOR_WINDOW + 1));
+        FrameRect(hdc, &rect, (HBRUSH)GetStockObject(BLACK_BRUSH));
+        
+        // Draw process blocks
+        HBRUSH brushes[] = {
+            CreateSolidBrush(RGB(255, 100, 100)),  // Red
+            CreateSolidBrush(RGB(100, 255, 100)),  // Green
+            CreateSolidBrush(RGB(100, 100, 255)),  // Blue
+            CreateSolidBrush(RGB(255, 255, 100)),  // Yellow
+            CreateSolidBrush(RGB(255, 100, 255)),  // Magenta
+            CreateSolidBrush(RGB(100, 255, 255))   // Cyan
+        };
+        
+        for (const auto& entry : lastGantt) {
+            int x1 = chartX + (entry.startTime * chartWidth) / maxTime;
+            int x2 = chartX + (entry.endTime * chartWidth) / maxTime;
+            
+            RECT processRect = {x1, chartY, x2, chartY + chartHeight};
+            FillRect(hdc, &processRect, brushes[(entry.processId - 1) % 6]);
+            FrameRect(hdc, &processRect, (HBRUSH)GetStockObject(BLACK_BRUSH));
+            
+            // Draw process label
+            string label = "P" + to_string(entry.processId);
+            SetBkMode(hdc, TRANSPARENT);
+            SetTextColor(hdc, RGB(0, 0, 0));
+            TextOut(hdc, x1 + 5, chartY + 10, label.c_str(), label.length());
+        }
+        
+        // Draw time markers
+        SetTextColor(hdc, RGB(0, 0, 0));
+        for (int t = 0; t <= maxTime; t += max(1, maxTime / 10)) {
+            int x = chartX + (t * chartWidth) / maxTime;
+            
+            // Draw tick mark
+            MoveToEx(hdc, x, chartY + chartHeight, NULL);
+            LineTo(hdc, x, chartY + chartHeight + 10);
+            
+            // Draw time label
+            string timeLabel = to_string(t);
+            TextOut(hdc, x - 5, chartY + chartHeight + 15, timeLabel.c_str(), timeLabel.length());
+        }
+        
+        // Clean up brushes
+        for (int i = 0; i < 6; i++) {
+            DeleteObject(brushes[i]);
+        }
+        
+        // Draw title
+        SetTextColor(hdc, RGB(0, 0, 0));
+        string title = "Gantt Chart: " + lastAlgorithm;
+        TextOut(hdc, chartX, chartY - 25, title.c_str(), title.length());
+    }
+}
+
+// Window procedure
+LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+    switch (uMsg) {
+    case WM_CREATE:
+        {
+            // Initialize common controls
+            INITCOMMONCONTROLSEX icex;
+            icex.dwSize = sizeof(INITCOMMONCONTROLSEX);
+            icex.dwICC = ICC_LISTVIEW_CLASSES;
+            InitCommonControlsEx(&icex);
+            
+            // Create input controls
+            CreateWindow("STATIC", "Process Input:", WS_VISIBLE | WS_CHILD | SS_LEFT,
+                        10, 10, 120, 20, hwnd, NULL, NULL, NULL);
+            
+            CreateWindow("STATIC", "Arrival Time:", WS_VISIBLE | WS_CHILD,
+                        10, 35, 100, 20, hwnd, NULL, NULL, NULL);
+            hArrivalEdit = CreateWindow("EDIT", "0", WS_VISIBLE | WS_CHILD | WS_BORDER | ES_NUMBER,
+                                      120, 35, 60, 25, hwnd, (HMENU)ID_ARRIVAL_EDIT, NULL, NULL);
+            
+            CreateWindow("STATIC", "Burst Time:", WS_VISIBLE | WS_CHILD,
+                        200, 35, 80, 20, hwnd, NULL, NULL, NULL);
+            hBurstEdit = CreateWindow("EDIT", "1", WS_VISIBLE | WS_CHILD | WS_BORDER | ES_NUMBER,
+                                    290, 35, 60, 25, hwnd, (HMENU)ID_BURST_EDIT, NULL, NULL);
+            
+            CreateWindow("STATIC", "Priority:", WS_VISIBLE | WS_CHILD,
+                        370, 35, 60, 20, hwnd, NULL, NULL, NULL);
+            hPriorityEdit = CreateWindow("EDIT", "1", WS_VISIBLE | WS_CHILD | WS_BORDER | ES_NUMBER,
+                                       440, 35, 60, 25, hwnd, (HMENU)ID_PRIORITY_EDIT, NULL, NULL);
+            
+            CreateWindow("BUTTON", "Add Process", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+                        520, 35, 100, 25, hwnd, (HMENU)ID_ADD_BUTTON, NULL, NULL);
+            
+            CreateWindow("BUTTON", "Clear All", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+                        630, 35, 80, 25, hwnd, (HMENU)ID_CLEAR_BUTTON, NULL, NULL);
+            
+            // Process list
+            CreateWindow("STATIC", "Current Processes:", WS_VISIBLE | WS_CHILD | SS_LEFT,
+                        10, 75, 150, 20, hwnd, NULL, NULL, NULL);
+            
+            hProcessList = CreateWindow(WC_LISTVIEW, "", WS_VISIBLE | WS_CHILD | LVS_REPORT | WS_BORDER,
+                                      10, 100, 700, 150, hwnd, (HMENU)ID_PROCESS_LIST, NULL, NULL);
+            
+            // Add columns to process list
+            LVCOLUMN lvc;
+            lvc.mask = LVCF_TEXT | LVCF_WIDTH;
+            lvc.cx = 120;
+            lvc.pszText = (LPSTR)"Process ID";
+            ListView_InsertColumn(hProcessList, 0, &lvc);
+            lvc.cx = 120;
+            lvc.pszText = (LPSTR)"Arrival Time";
+            ListView_InsertColumn(hProcessList, 1, &lvc);
+            lvc.cx = 120;
+            lvc.pszText = (LPSTR)"Burst Time";
+            ListView_InsertColumn(hProcessList, 2, &lvc);
+            lvc.cx = 120;
+            lvc.pszText = (LPSTR)"Priority";
+            ListView_InsertColumn(hProcessList, 3, &lvc);
+            
+            // Algorithm controls
+            CreateWindow("STATIC", "Scheduling Algorithms:", WS_VISIBLE | WS_CHILD | SS_LEFT,
+                        10, 265, 180, 20, hwnd, NULL, NULL, NULL);
+            
+            CreateWindow("BUTTON", "FCFS", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+                        10, 290, 80, 30, hwnd, (HMENU)ID_FCFS_BUTTON, NULL, NULL);
+            
+            CreateWindow("BUTTON", "SJF", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+                        100, 290, 80, 30, hwnd, (HMENU)ID_SJF_BUTTON, NULL, NULL);
+            
+            CreateWindow("BUTTON", "Priority", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+                        190, 290, 80, 30, hwnd, (HMENU)ID_PRIORITY_BUTTON, NULL, NULL);
+            
+            CreateWindow("STATIC", "Time Quantum:", WS_VISIBLE | WS_CHILD,
+                        280, 295, 100, 20, hwnd, NULL, NULL, NULL);
+            hQuantumEdit = CreateWindow("EDIT", "2", WS_VISIBLE | WS_CHILD | WS_BORDER | ES_NUMBER,
+                                      390, 295, 40, 20, hwnd, (HMENU)ID_QUANTUM_EDIT, NULL, NULL);
+            
+            CreateWindow("BUTTON", "Round Robin", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+                        440, 290, 100, 30, hwnd, (HMENU)ID_RR_BUTTON, NULL, NULL);
+            
+            CreateWindow("BUTTON", "Compare All", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+                        550, 290, 100, 30, hwnd, (HMENU)ID_COMPARE_BUTTON, NULL, NULL);
+            
+            // Results list
+            CreateWindow("STATIC", "Results:", WS_VISIBLE | WS_CHILD | SS_LEFT,
+                        10, 335, 100, 20, hwnd, NULL, NULL, NULL);
+            
+            hResultsList = CreateWindow(WC_LISTVIEW, "", WS_VISIBLE | WS_CHILD | LVS_REPORT | WS_BORDER,
+                                      10, 360, 700, 150, hwnd, (HMENU)ID_RESULTS_LIST, NULL, NULL);
+            
+            // Add columns to results list
+            lvc.cx = 100;
+            lvc.pszText = (LPSTR)"Process";
+            ListView_InsertColumn(hResultsList, 0, &lvc);
+            lvc.cx = 100;
+            lvc.pszText = (LPSTR)"Arrival";
+            ListView_InsertColumn(hResultsList, 1, &lvc);
+            lvc.cx = 100;
+            lvc.pszText = (LPSTR)"Burst";
+            ListView_InsertColumn(hResultsList, 2, &lvc);
+            lvc.cx = 100;
+            lvc.pszText = (LPSTR)"Completion";
+            ListView_InsertColumn(hResultsList, 3, &lvc);
+            lvc.cx = 100;
+            lvc.pszText = (LPSTR)"Waiting";
+            ListView_InsertColumn(hResultsList, 4, &lvc);
+            lvc.cx = 100;
+            lvc.pszText = (LPSTR)"Turnaround";
+            ListView_InsertColumn(hResultsList, 5, &lvc);
+            
+            // Metrics display
+            hMetricsStatic = CreateWindow("STATIC", "Results will appear here...", WS_VISIBLE | WS_CHILD | SS_LEFT,
+                        10, 520, 700, 20, hwnd, (HMENU)ID_METRICS_STATIC, NULL, NULL);
+        }
+        break;
+        
+    case WM_COMMAND:
+        switch (LOWORD(wParam)) {
+        case ID_ADD_BUTTON:
+            {
+                char buffer[10];
+                GetWindowText(hArrivalEdit, buffer, 10);
+                int arrival = atoi(buffer);
+                
+                GetWindowText(hBurstEdit, buffer, 10);
+                int burst = atoi(buffer);
+                
+                GetWindowText(hPriorityEdit, buffer, 10);
+                int priority = atoi(buffer);
+                
+                if (burst > 0) {
+                    processes.emplace_back(processes.size() + 1, arrival, burst, priority);
+                    UpdateProcessList();
+                    
+                    // Clear input fields
+                    SetWindowText(hArrivalEdit, "0");
+                    SetWindowText(hBurstEdit, "1");
+                    SetWindowText(hPriorityEdit, "1");
+                } else {
+                    MessageBox(hwnd, "Burst time must be greater than 0!", "Invalid Input", MB_OK | MB_ICONERROR);
+                }
+            }
+            break;
+            
+        case ID_CLEAR_BUTTON:
+            processes.clear();
+            lastResults.clear();
+            lastGantt.clear();
+            UpdateProcessList();
+            SendMessage(hResultsList, LVM_DELETEALLITEMS, 0, 0);
+            SetWindowText(hMetricsStatic, "Results cleared.");
+            InvalidateRect(hwnd, NULL, TRUE);
+            break;
+            
+        case ID_FCFS_BUTTON:
+            RunAlgorithm("FCFS");
+            break;
+            
+        case ID_SJF_BUTTON:
+            RunAlgorithm("SJF");
+            break;
+            
+        case ID_RR_BUTTON:
+            RunAlgorithm("RR");
+            break;
+            
+        case ID_PRIORITY_BUTTON:
+            RunAlgorithm("Priority");
+            break;
+            
+        case ID_COMPARE_BUTTON:
+            {
+                if (processes.empty()) {
+                    MessageBox(hwnd, "Please add some processes first!", "No Processes", MB_OK | MB_ICONWARNING);
+                    break;
+                }
+                
+                // Run all algorithms and compare
+                auto fcfsResult = CPUScheduler::fcfs(processes);
+                auto sjfResult = CPUScheduler::sjf(processes);
+                auto rrResult = CPUScheduler::roundRobin(processes, 2);
+                auto priorityResult = CPUScheduler::priority(processes);
+                
+                double fcfsWait = CPUScheduler::calculateAverageWaitingTime(fcfsResult.first);
+                double sjfWait = CPUScheduler::calculateAverageWaitingTime(sjfResult.first);
+                double rrWait = CPUScheduler::calculateAverageWaitingTime(rrResult.first);
+                double priorityWait = CPUScheduler::calculateAverageWaitingTime(priorityResult.first);
+                
+                stringstream ss;
+                ss << "Algorithm Comparison (Average Waiting Time):\n\n";
+                ss << "FCFS: " << fixed << setprecision(2) << fcfsWait << " ms\n";
+                ss << "SJF: " << fixed << setprecision(2) << sjfWait << " ms\n";
+                ss << "Round Robin (q=2): " << fixed << setprecision(2) << rrWait << " ms\n";
+                ss << "Priority: " << fixed << setprecision(2) << priorityWait << " ms\n\n";
+                
+                double minWait = min({fcfsWait, sjfWait, rrWait, priorityWait});
+                if (minWait == fcfsWait) ss << "Best: FCFS";
+                else if (minWait == sjfWait) ss << "Best: SJF";
+                else if (minWait == rrWait) ss << "Best: Round Robin";
+                else ss << "Best: Priority";
+                
+                MessageBox(hwnd, ss.str().c_str(), "Algorithm Comparison", MB_OK | MB_ICONINFORMATION);
+            }
+            break;
+        }
+        break;
+        
+    case WM_PAINT:
+        {
+            PAINTSTRUCT ps;
+            HDC hdc = BeginPaint(hwnd, &ps);
+            DrawGanttChart(hdc);
+            EndPaint(hwnd, &ps);
+        }
+        break;
+        
+    case WM_DESTROY:
+        PostQuitMessage(0);
+        break;
+        
+    default:
+        return DefWindowProc(hwnd, uMsg, wParam, lParam);
+    }
+    return 0;
+}
+
+// Main function
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
+    const char* CLASS_NAME = "CPUSchedulerWindow";
+    
+    WNDCLASS wc = {};
+    wc.lpfnWndProc = WindowProc;
+    wc.hInstance = hInstance;
+    wc.lpszClassName = CLASS_NAME;
+    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+    wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+    
+    RegisterClass(&wc);
+    
+    hMainWindow = CreateWindowEx(
+        0,
+        CLASS_NAME,
+        "CPU Scheduling Algorithm Simulator - GUI",
+        WS_OVERLAPPEDWINDOW,
+        CW_USEDEFAULT, CW_USEDEFAULT, 800, 650,
+        NULL, NULL, hInstance, NULL
+    );
+    
+    if (hMainWindow == NULL) {
+        MessageBox(NULL, "Window creation failed!", "Error", MB_OK | MB_ICONERROR);
+        return 0;
+    }
+    
+    ShowWindow(hMainWindow, nCmdShow);
+    UpdateWindow(hMainWindow);
+    
+    MSG msg = {};
+    while (GetMessage(&msg, NULL, 0, 0)) {
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
+    }
+    
+    return 0;
+}
